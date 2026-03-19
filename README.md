@@ -7,3 +7,22 @@ The algorithm for extracting the data contained in the submission was:
 2. Apply the MP-UMAP_Reduction.py script in the raw-predictions folder with a percentil of 95, generating the respective UMAP-predictions folder;
 3. Apply the MP-DE-LatentSpaceTopology.py files the past UMAP-predictions folder, with the accuracy .csv file inside of it from the respective raw-predicitions folder;
 4. Analyze the results.
+
+Note: When installing the original grokking repository from OpenAI to replicate these findings, it is important to update its setup file to this:
+
+    setup(
+    name="grok",
+    packages=find_packages(),
+    version="0.0.1",
+    install_requires=[
+        "pytorch_lightning==1.0.0",
+        "blobfile",
+        "numpy<2",
+        "torch",
+        "tqdm",
+        "scipy",
+        "mod",
+        "matplotlib",
+    ],
+    )
+
