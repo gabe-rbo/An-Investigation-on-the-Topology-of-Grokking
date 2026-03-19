@@ -2,7 +2,7 @@
 This script is dedicated to automatize the extraction of Topological Properties of LatentSpaces. 
 It is meant to be used in the command line like:
 
-python MP-DE-LatentSpaceTopology <predictions_folder: path> <training_data_pct: int> <percentile: float> [--plot_evolution]
+python MP-DE-LatentSpaceTopology <predictions_folder: path> <training_data_pct: int> <k_neighbors: int> <percentile: float> [--plot_evolution]
 """
 import os
 import sys
@@ -133,17 +133,15 @@ def init_julia_worker():
 
 def _worker_quick_mapper(task_args):
     """Worker function for parallelizing QuickMapper."""
-    # We ignore the hardcoded 'epsilon' passed from args, or you can remove it entirely
-    epoch, df_name, data, max_loops, min_modularity_gain, target_percentile = task_args
+    epoch, df_name, data, max_loops, min_modularity_gain, target_percentile, k_neighbors = task_args
     
     # 1. Build the Tree
     V = list(range(len(data)))
     tree = cKDTree(data)
     
     # --- DYNAMIC EPSILON CALCULATION ---
-    # Query the distance to the 5th neighbor for every single point.
-    # We use k=6 because the 1st closest neighbor is always the point itself (distance 0).
-    k = min(6, len(data)) 
+    # We add 1 to k_neighbors because the 1st closest neighbor is the point itself (distance 0).
+    k = min(k_neighbors + 1, len(data)) 
     distances, _ = tree.query(data, k=k)
     
     # Extract just the distances to that specific k-th neighbor
@@ -318,6 +316,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Analyze Topological Features of Latent Space Epochs.")
     parser.add_argument("predictions_folder", type=str, help="Path to the predictions folder (e.g., predictions-50pct)")
     parser.add_argument("training_data_pct", type=str, help="Percentage of training data used (e.g., 50)")
+    parser.add_argument("k_neighbors", type=int, help="Number of neighbors for dynamic epsilon (e.g., 5)")
     parser.add_argument("percentile", type=float, help="Percentile for dynamic epsilon (e.g., 90 or 0.1)")
     parser.add_argument("--plot_evolution", action="store_true", help="Set this flag to generate interactive evolution graphs")
     
@@ -333,14 +332,15 @@ if __name__ == "__main__":
         sys.exit(1)
 
     training_data_pct = args.training_data_pct
+    k_neighbors = args.k_neighbors
     target_percentile = args.percentile
     
     # Format the string to remove trailing zeros and substitute '.' with '-'
     percentile_str = f"{target_percentile:g}".replace('.', '-') 
     folder_name = f"{percentile_str}percentil"
     
-    # Ensure nested output directory exists: MP-DE / Xpercentil
-    output_folder = predictions_folder / "MP-DE" / folder_name
+    # Ensure nested output directory exists: DE / k_neighbors / Xpercentil
+    output_folder = predictions_folder / "DE" / f"{k_neighbors}_neighbors" / folder_name
     output_folder.mkdir(parents=True, exist_ok=True)
     
     # Restrict to half of the available cores to prevent memory/CPU starvation on the host OS
@@ -367,13 +367,13 @@ if __name__ == "__main__":
 
     # 2. Simplification (PARALLELIZED)
     t_ini = time()
-    print(f"Iniciando QuickMapper.jl em PARALELO ({num_cores} cores, Epsilon Dinâmico @ {target_percentile} percentil)...")
+    print(f"Iniciando QuickMapper.jl em PARALELO ({num_cores} cores, {k_neighbors} vizinhos, Epsilon Dinâmico @ {target_percentile} percentil)...")
     
     # Pack tasks for workers
     qm_tasks = []
     for epoch, dfs in epochs_np.items():
         for df_name, np_data in dfs.items():
-            qm_tasks.append((epoch, df_name, np_data, 5, 1e-6, target_percentile))
+            qm_tasks.append((epoch, df_name, np_data, 5, 1e-6, target_percentile, k_neighbors))
 
     G_simples, G_raws = {}, {}
     for epoch in epochs_np.keys():
@@ -405,7 +405,7 @@ if __name__ == "__main__":
         print("Generating Interactive Evolution Graphs...")
         for data_key, sequence in sequences.items():
             graph = create_interactive_graph_movie(sequence, epoch_numbers[data_key])
-            output_file = output_folder / f"DE-evolution_graph_{data_key}-{training_data_pct}pct-{folder_name}.html"
+            output_file = output_folder / f"DE-evolution_graph_{data_key}-{training_data_pct}pct-k{k_neighbors}-{folder_name}.html"
             # Export with 100% width/height so it fills the browser window
             graph.write_html(str(output_file), default_width="100%", default_height="100%")
     else:
@@ -454,7 +454,7 @@ if __name__ == "__main__":
             df_betti[col] = df_betti[col].astype(int)
             
         clean_key = Path(data_key).stem 
-        csv_out_path = output_folder / f"DE-betti_{clean_key}-{folder_name}.csv"
+        csv_out_path = output_folder / f"DE-betti_{clean_key}-k{k_neighbors}-{folder_name}.csv"
         df_betti.to_csv(csv_out_path, index=False)
         print(f"  -> Saved {csv_out_path}")
 
@@ -493,7 +493,7 @@ if __name__ == "__main__":
 
             clean_key = Path(data_key).stem
             fig.update_layout(
-                title=f'Evolution of Betti Numbers and Model Accuracy<br><sup>Data: {clean_key} | Epsilon: {target_percentile}th Percentile</sup>',
+                title=f'Evolution of Betti Numbers and Model Accuracy<br><sup>Data: {clean_key} | k={k_neighbors} Neighbors | Epsilon: {target_percentile}th Percentile</sup>',
                 autosize=True, # Allows scaling
                 xaxis_title='Epoch', yaxis_title='Betti Number / Accuracy (%)',
                 yaxis=dict(range=[0, 100], dtick=10, gridcolor='lightgray', gridwidth=1, griddash='dash'),
@@ -503,7 +503,7 @@ if __name__ == "__main__":
                 legend=dict(yanchor="top", y=1, xanchor="left", x=1.02, bgcolor="rgba(255,255,255,0.8)"),
                 margin=dict(l=60, r=150, t=80, b=60)
             )
-            output_betti_file = output_folder / f'DE-evolution_betti_acc_{clean_key}-{training_data_pct}pct-{folder_name}.html'
+            output_betti_file = output_folder / f'DE-evolution_betti_acc_{clean_key}-{training_data_pct}pct-k{k_neighbors}-{folder_name}.html'
             
             # Native Plotly method to force a 16:9 aspect ratio and make it fully responsive
             fig.write_html(
